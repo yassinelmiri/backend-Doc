@@ -1,71 +1,60 @@
 const mongoose = require('mongoose');
 
 const patientSchema = new mongoose.Schema({
-  nom: {
+  nomComplet: {
     type: String,
-    required: [true, 'Le nom est requis'],
+    required: true,
     trim: true
   },
   telephone: {
     type: String,
-    required: [true, 'Le téléphone est requis'],
+    required: true,
     trim: true
   },
-  email: {
-    type: String,
-    required: [true, 'L\'email est requis'],
-    lowercase: true,
-    trim: true,
-    match: [/^\S+@\S+\.\S+$/, 'Veuillez fournir un email valide']
-  },
   heureRendezVous: {
-    type: Date,
-    required: [true, 'L\'heure du rendez-vous est requise']
+    type: String,
+    required: true
+  },
+  heureEstimee: {
+    type: String,
+    required: true
+  },
+  termine: {
+    type: Boolean,
+    default: false
   },
   doctorId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Doctor',
     required: true
   },
+  doctorName: {
+    type: String,
+    default: 'Docteur'
+  },
+  importFileName: String,
+  importDate: {
+    type: Date,
+    default: Date.now
+  },
   statut: {
     type: String,
-    enum: ['en_attente', 'confirme', 'annule', 'retarde', 'termine'],
+    enum: ['en_attente', 'en_cours', 'retarde', 'termine'],
     default: 'en_attente'
   },
   smsEnvoye: {
     type: Boolean,
     default: false
   },
-  dateSMS: {
-    type: Date
+  dateSMS: Date,
+  messageSMS: String,
+  retardMinutes: {
+    type: Number,
+    default: 0
   },
-  notes: {
-    type: String,
-    trim: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
+  notes: String
+}, {
+  timestamps: true
 });
-
-// Index pour optimiser les recherches
-patientSchema.index({ doctorId: 1, heureRendezVous: 1 });
-patientSchema.index({ statut: 1 });
-
-// Middleware pour mettre à jour updatedAt
-patientSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  next();
-});
-
-// Méthode pour vérifier si le rendez-vous est en retard
-patientSchema.methods.isRetarde = function() {
-  return this.statut === 'retarde';
-};
 
 module.exports = mongoose.model('Patient', patientSchema);

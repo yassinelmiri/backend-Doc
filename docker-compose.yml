@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # Service MongoDB
+  mongodb:
+    image: mongo:6
+    container_name: docnoti-mongodb
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_DATABASE=docnoti
+    volumes:
+      - mongodb_data:/data/db
+    ports:
+      - "27017:27017"
+    networks:
+      - docnoti-network
+
+  # Service Backend Node.js
+  backend:
+    build: .
+    container_name: docnoti-backend
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - MONGODB_URI=mongodb://mongodb:27017/docnoti
+    ports:
+      - "4000:4000"
+    depends_on:
+      - mongodb
+    volumes:
+      - ./uploads:/app/uploads
+      - /app/node_modules
+    env_file:
+      - .env
+    networks:
+      - docnoti-network
+    command: npm start
+
+networks:
+  docnoti-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:

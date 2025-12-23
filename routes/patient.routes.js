@@ -1,25 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const { PatientController, upload } = require('../controllers/patient.controller');
+const { PatientController } = require('../controllers/patient.controller');
 const authMiddleware = require('../middleware/auth.middleware');
 
-// Middleware d'authentification
+// Protection de toutes les routes
 router.use(authMiddleware);
 
-// Routes CRUD patients
+// CRUD Patients
 router.post('/', PatientController.createPatient);
 router.get('/', PatientController.getPatients);
+router.get('/stats', PatientController.getStats);
 router.get('/:id', PatientController.getPatient);
 router.put('/:id', PatientController.updatePatient);
 router.delete('/:id', PatientController.deletePatient);
 
-// Routes SMS
-router.post('/:id/sms', PatientController.sendSMS);
-router.put('/:id/delay', PatientController.markAsDelayed);
-
-// Routes export/import
+// Import/Export
+router.post('/import', PatientController.importPatients);
 router.get('/export/csv', PatientController.exportCSV);
 router.get('/export/excel', PatientController.exportExcel);
-router.post('/import', PatientController.importPatients);
+
+// SMS
+router.post('/:id/sms', PatientController.sendSMS);
+router.post('/sms/delay-bulk', PatientController.sendBulkDelaySMS);
 
 module.exports = router;

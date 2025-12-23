@@ -3,7 +3,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Configuration Multer pour l'upload de fichiers
+// Configuration Multer
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadDir = 'uploads/';
@@ -26,27 +26,22 @@ const upload = multer({
     if (allowedExtensions.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Seuls les fichiers CSV et Excel sont autorisés'));
+      cb(new Error('Seuls les fichiers CSV et Excel sont autorisés (.csv, .xlsx, .xls)'));
     }
   },
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB
+    fileSize: 10 * 1024 * 1024 // 10MB
   }
 });
+
+// Créer le middleware upload une seule fois
+const uploadMiddleware = upload.single('file'); // IMPORTANT: 'file' doit correspondre au nom du champ dans Postman
 
 class PatientController {
   // Créer un patient
   static async createPatient(req, res) {
     try {
       const patient = await PatientService.createPatient(req.body, req.user.id);
-      
-      // Ajouter à l'historique du médecin
-      const DoctorService = require('../services/doctor.service');
-      await DoctorService.addActionToHistory(req.user.id, 'CREATION_PATIENT', {
-        patientId: patient._id,
-        patientNom: patient.nom
-      });
-      
       res.status(201).json({
         success: true,
         message: 'Patient créé avec succès',
@@ -60,7 +55,7 @@ class PatientController {
     }
   }
 
-  // Obtenir tous les patients du médecin
+  // Obtenir les patients
   static async getPatients(req, res) {
     try {
       const patients = await PatientService.getPatientsByDoctor(req.user.id, req.query);
@@ -77,111 +72,71 @@ class PatientController {
     }
   }
 
-  // Obtenir un patient spécifique
-  static async getPatient(req, res) {
-    try {
-      const { id } = req.params;
-      const patient = await PatientService.getPatientById(id, req.user.id);
-      res.status(200).json({
-        success: true,
-        data: patient
-      });
-    } catch (error) {
-      res.status(404).json({
-        success: false,
-        message: error.message
-      });
-    }
-  }
+  // Importer depuis fichier - VERSION CORRIGÉE
+  static async importPatients(req, res) {
+    // Utiliser le middleware upload
+    uploadMiddleware(req, res, async (err) => {
+      if (err) {
+        console.error('Erreur upload:', err.message);
+        return res.status(400).json({
+          success: false,
+          message: err.message.includes('Unexpected field') 
+            ? 'Le champ du fichier doit s\'appeler "file"' 
+            : err.message
+        });
+      }
 
-  // Mettre à jour un patient
-  static async updatePatient(req, res) {
-    try {
-      const { id } = req.params;
-      const patient = await PatientService.updatePatient(id, req.user.id, req.body);
-      
-      // Ajouter à l'historique
-      const DoctorService = require('../services/doctor.service');
-      await DoctorService.addActionToHistory(req.user.id, 'MODIFICATION_PATIENT', {
-        patientId: patient._id,
-        patientNom: patient.nom,
-        updatedFields: Object.keys(req.body)
-      });
-      
-      res.status(200).json({
-        success: true,
-        message: 'Patient mis à jour avec succès',
-        data: patient
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message
-      });
-    }
-  }
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: 'Veuillez sélectionner un fichier'
+        });
+      }
 
-  // Supprimer un patient
-  static async deletePatient(req, res) {
-    try {
-      const { id } = req.params;
-      const patient = await PatientService.deletePatient(id, req.user.id);
-      
-      // Ajouter à l'historique
-      const DoctorService = require('../services/doctor.service');
-      await DoctorService.addActionToHistory(req.user.id, 'SUPPRESSION_PATIENT', {
-        patientId: patient._id,
-        patientNom: patient.nom
-      });
-      
-      res.status(200).json({
-        success: true,
-        message: 'Patient supprimé avec succès',
-        data: patient
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message
-      });
-    }
-  }
+      console.log('Fichier uploadé:', req.file);
+      console.log('Doctor ID:', req.user.id);
 
-  // Envoyer SMS
-  static async sendSMS(req, res) {
-    try {
-      const { id } = req.params;
-      const { message } = req.body;
-      
-      const result = await PatientService.sendSMS(id, req.user.id, message);
-      
-      // Ajouter à l'historique
-      const DoctorService = require('../services/doctor.service');
-      await DoctorService.addActionToHistory(req.user.id, 'ENVOI_SMS', {
-        patientId: id,
-        message: message
-      });
-      
-      res.status(200).json({
-        success: true,
-        message: result.message
-      });
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        message: error.message
-      });
-    }
+      try {
+        const patients = await PatientService.importFromFile(
+          req.file.path, 
+          req.user.id, 
+          req.file.originalname
+        );
+
+        console.log(`${patients.length} patients importés avec succès`);
+
+        // Nettoyer le fichier
+        if (fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+
+        res.status(200).json({
+          success: true,
+          message: `${patients.length} patients importés avec succès`,
+          data: patients
+        });
+      } catch (error) {
+        console.error('Erreur import:', error.message);
+        // Nettoyer en cas d'erreur
+        if (req.file && fs.existsSync(req.file.path)) {
+          fs.unlinkSync(req.file.path);
+        }
+        res.status(400).json({
+          success: false,
+          message: error.message
+        });
+      }
+    });
   }
 
   // Exporter en CSV
   static async exportCSV(req, res) {
     try {
-      const csv = await PatientService.exportToCSV(req.user.id);
+      const csvContent = await PatientService.exportToCSV(req.user.id);
       
       res.setHeader('Content-Type', 'text/csv');
-      res.setHeader('Content-Disposition', 'attachment; filename=patients.csv');
-      res.send(csv);
+      res.setHeader('Content-Disposition', `attachment; filename=patients_${Date.now()}.csv`);
+      res.send(csvContent);
     } catch (error) {
       res.status(500).json({
         success: false,
@@ -196,7 +151,7 @@ class PatientController {
       const excelBuffer = await PatientService.exportToExcel(req.user.id);
       
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', 'attachment; filename=patients.xlsx');
+      res.setHeader('Content-Disposition', `attachment; filename=patients_${Date.now()}.xlsx`);
       res.send(excelBuffer);
     } catch (error) {
       res.status(500).json({
@@ -206,71 +161,54 @@ class PatientController {
     }
   }
 
-  // Importer depuis fichier
-  static async importPatients(req, res) {
+  // Envoyer SMS à un patient
+  static async sendSMS(req, res) {
     try {
-      upload.single('file')(req, res, async (err) => {
-        if (err) {
-          return res.status(400).json({
-            success: false,
-            message: err.message
-          });
-        }
-        
-        if (!req.file) {
-          return res.status(400).json({
-            success: false,
-            message: 'Veuillez sélectionner un fichier'
-          });
-        }
-        
-        try {
-          const patients = await PatientService.importFromFile(req.file.path, req.user.id);
-          
-          // Nettoyer le fichier temporaire
-          fs.unlinkSync(req.file.path);
-          
-          // Ajouter à l'historique
-          const DoctorService = require('../services/doctor.service');
-          await DoctorService.addActionToHistory(req.user.id, 'IMPORT_PATIENTS', {
-            file: req.file.originalname,
-            patientsCount: patients.length
-          });
-          
-          res.status(200).json({
-            success: true,
-            message: `${patients.length} patients importés avec succès`,
-            data: patients
-          });
-        } catch (error) {
-          // Nettoyer le fichier en cas d'erreur
-          if (req.file && fs.existsSync(req.file.path)) {
-            fs.unlinkSync(req.file.path);
-          }
-          
-          res.status(400).json({
-            success: false,
-            message: error.message
-          });
-        }
+      const { id } = req.params;
+      const { message } = req.body;
+      
+      const result = await PatientService.sendSMS(id, req.user.id, message);
+      
+      res.status(200).json({
+        success: true,
+        message: result.message,
+        data: result
       });
     } catch (error) {
-      res.status(500).json({
+      res.status(400).json({
         success: false,
         message: error.message
       });
     }
   }
 
-  // Marquer comme retardé
-  static async markAsDelayed(req, res) {
+  // Envoyer SMS en masse pour retard
+  static async sendBulkDelaySMS(req, res) {
     try {
-      const { id } = req.params;
-      const patient = await PatientService.markAsDelayed(id, req.user.id);
+      const result = await PatientService.sendBulkDelaySMS(req.user.id);
       
       res.status(200).json({
         success: true,
-        message: 'Rendez-vous marqué comme retardé',
+        message: `SMS envoyés: ${result.smsSent}/${result.delayedPatients} patients`,
+        data: result
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // Mettre à jour patient
+  static async updatePatient(req, res) {
+    try {
+      const { id } = req.params;
+      const patient = await PatientService.updatePatient(id, req.user.id, req.body);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Patient mis à jour',
         data: patient
       });
     } catch (error) {
@@ -280,6 +218,77 @@ class PatientController {
       });
     }
   }
+
+  // Supprimer patient
+  static async deletePatient(req, res) {
+    try {
+      const { id } = req.params;
+      const patient = await PatientService.deletePatient(id, req.user.id);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Patient supprimé',
+        data: patient
+      });
+    } catch (error) {
+      res.status(400).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // Obtenir un patient
+  static async getPatient(req, res) {
+    try {
+      const { id } = req.params;
+      const patients = await PatientService.getPatientsByDoctor(req.user.id);
+      const patient = patients.find(p => p._id.toString() === id);
+      
+      if (!patient) {
+        return res.status(404).json({
+          success: false,
+          message: 'Patient non trouvé'
+        });
+      }
+      
+      res.status(200).json({
+        success: true,
+        data: patient
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
+
+  // Statistiques
+  static async getStats(req, res) {
+    try {
+      const patients = await PatientService.getPatientsByDoctor(req.user.id);
+      
+      const stats = {
+        total: patients.length,
+        en_attente: patients.filter(p => p.statut === 'en_attente').length,
+        en_cours: patients.filter(p => p.statut === 'en_cours').length,
+        retarde: patients.filter(p => p.statut === 'retarde').length,
+        termine: patients.filter(p => p.statut === 'termine').length,
+        smsEnvoye: patients.filter(p => p.smsEnvoye).length
+      };
+      
+      res.status(200).json({
+        success: true,
+        data: stats
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        message: error.message
+      });
+    }
+  }
 }
 
-module.exports = { PatientController, upload };
+module.exports = { PatientController, uploadMiddleware };
